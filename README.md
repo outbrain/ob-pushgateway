@@ -1,4 +1,4 @@
-# Prometheus Pushgateway
+# Prometheus Pushgateway(with Time To Live)
 
 [![CircleCI](https://circleci.com/gh/prometheus/pushgateway/tree/master.svg?style=shield)][circleci]
 [![Docker Repository on Quay](https://quay.io/repository/prometheus/pushgateway/status)][quay]
@@ -73,6 +73,10 @@ docker run -d -p 9091:9091 prom/pushgateway
 ```
 
 ## Use it
+
+### Time To Live
+If we pass a argument `metric.timetolive` at the time of start up(Example : `-metric.timetolive=60s`), 
+the metrics will be removed from pushgateway after the 'metric.timetolive' from the time of pushing the metric.
 
 ### Configure the Pushgateway as a target to scrape
 
