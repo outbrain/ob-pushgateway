@@ -10,6 +10,18 @@ exist long enough to be scraped, they can instead push their metrics
 to a Pushgateway. The Pushgateway then exposes these metrics to
 Prometheus.
 
+## How to build
+Until TeamCity is ready the image can be build manually. Here is how:
+```bash
+export VERSION=<TAG_VERSION>
+git checkout -b patch_v$VERSION v$VERSION
+```
+apply `ttl_patch.patch` from `ttl_patch` branch with TTL changes and make sure the code works as expected.
+```bash
+docker build --platform=linux/amd64 . -t artifactorymaster.outbrain.com:5005/opsvisibility/ob-pushgateway:$VERSION
+docker push artifactorymaster.outbrain.com:5005/opsvisibility/ob-pushgateway:$VERSION
+```
+
 ## Non-goals
 
 First of all, the Pushgateway is not capable of turning Prometheus into a
