@@ -1,0 +1,308 @@
+Subject: [PATCH] updated readme
+build pushgateway in Dockerfile
+added TTL patch
+---
+Index: README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/README.md b/README.md
+--- a/README.md	(revision 007ba874bead1b9ad2253d89e3adeb16a73fd012)
++++ b/README.md	(revision 705f11e2816f332e2c83b4d9856df8e1523a6152)
+@@ -1,4 +1,4 @@
+-# Prometheus Pushgateway
++# Prometheus Pushgateway(with Time To Live)
+ 
+ [![CircleCI](https://circleci.com/gh/prometheus/pushgateway/tree/master.svg?style=shield)][circleci]
+ [![Docker Repository on Quay](https://quay.io/repository/prometheus/pushgateway/status)][quay]
+@@ -10,6 +10,18 @@
+ to a Pushgateway. The Pushgateway then exposes these metrics to
+ Prometheus.
+ 
++## How to build
++Until TeamCity is ready the image can be built manually. Here is how:
++```bash
++export VERSION=<TAG_VERSION>
++git checkout -b patch_v$VERSION v$VERSION
++```
++apply `ttl_patch.patch` from `ttl_patch` branch with TTL changes and make sure the code works as expected.
++```bash
++docker build --platform=linux/amd64 . -t artifactorymaster.outbrain.com:5005/opsvisibility/ob-pushgateway:$VERSION
++docker push artifactorymaster.outbrain.com:5005/opsvisibility/ob-pushgateway:$VERSION
++```
++
+ ## Non-goals
+ 
+ First of all, the Pushgateway is not capable of turning Prometheus into a
+@@ -74,6 +86,10 @@
+ 
+ ## Use it
+ 
++### Time To Live
++If we pass a argument `metric.timetolive` at the time of start up(Example : `-metric.timetolive=60s`), 
++the metrics will be removed from pushgateway after the 'metric.timetolive' from the time of pushing the metric.
++
+ ### Configure the Pushgateway as a target to scrape
+ 
+ The Pushgateway has to be configured as a target to scrape by Prometheus, using
+Index: api/v1/api_test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/api/v1/api_test.go b/api/v1/api_test.go
+--- a/api/v1/api_test.go	(revision 007ba874bead1b9ad2253d89e3adeb16a73fd012)
++++ b/api/v1/api_test.go	(revision 08ab8fc5c2205426c76af9135de867db33c57c0b)
+@@ -82,7 +82,7 @@
+ }
+ 
+ func TestStatusAPI(t *testing.T) {
+-	dms := storage.NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms := storage.NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 	testAPI := New(logger, dms, testFlags, testBuildInfo)
+ 
+ 	req, err := http.NewRequest("GET", "http://example.org/", &bytes.Buffer{})
+@@ -113,7 +113,7 @@
+ }
+ 
+ func TestMetricsAPI(t *testing.T) {
+-	dms := storage.NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms := storage.NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 	testAPI := New(logger, dms, testFlags, testBuildInfo)
+ 
+ 	req, err := http.NewRequest("GET", "http://example.org/", &bytes.Buffer{})
+Index: handler/status_test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/handler/status_test.go b/handler/status_test.go
+--- a/handler/status_test.go	(revision 007ba874bead1b9ad2253d89e3adeb16a73fd012)
++++ b/handler/status_test.go	(revision 08ab8fc5c2205426c76af9135de867db33c57c0b)
+@@ -33,7 +33,7 @@
+ 	}
+ 	pathPrefix := "/foobar"
+ 
+-	ms := storage.NewDiskMetricStore("", time.Minute, nil, logger)
++	ms := storage.NewDiskMetricStore("", time.Minute, nil, logger, 100*time.Second)
+ 	status := Status(ms, asset.Assets, flags, pathPrefix, logger)
+ 	defer ms.Shutdown()
+ 
+Index: main.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/main.go b/main.go
+--- a/main.go	(revision 007ba874bead1b9ad2253d89e3adeb16a73fd012)
++++ b/main.go	(revision 08ab8fc5c2205426c76af9135de867db33c57c0b)
+@@ -70,6 +70,7 @@
+ 		enableAdminAPI      = app.Flag("web.enable-admin-api", "Enable API endpoints for admin control actions.").Default("false").Bool()
+ 		persistenceFile     = app.Flag("persistence.file", "File to persist metrics. If empty, metrics are only kept in memory.").Default("").String()
+ 		persistenceInterval = app.Flag("persistence.interval", "The minimum interval at which to write out the persistence file.").Default("5m").Duration()
++		timeToLive          = app.Flag("metric.timetolive", "The time to Live interval for metrics").Default("0s").Duration()
+ 		pushUnchecked       = app.Flag("push.disable-consistency-check", "Do not check consistency of pushed metrics. DANGEROUS.").Default("false").Bool()
+ 		promlogConfig       = promlog.Config{}
+ 	)
+@@ -98,7 +99,7 @@
+ 		}
+ 	}
+ 
+-	ms := storage.NewDiskMetricStore(*persistenceFile, *persistenceInterval, prometheus.DefaultGatherer, logger)
++	ms := storage.NewDiskMetricStore(*persistenceFile, *persistenceInterval, prometheus.DefaultGatherer, logger, *timeToLive)
+ 
+ 	// Create a Gatherer combining the DefaultGatherer and the metrics from the metric store.
+ 	g := prometheus.Gatherers{
+Index: storage/diskmetricstore.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/storage/diskmetricstore.go b/storage/diskmetricstore.go
+--- a/storage/diskmetricstore.go	(revision 007ba874bead1b9ad2253d89e3adeb16a73fd012)
++++ b/storage/diskmetricstore.go	(revision 08ab8fc5c2205426c76af9135de867db33c57c0b)
+@@ -80,6 +80,7 @@
+ 	persistenceInterval time.Duration,
+ 	gatherPredefinedHelpFrom prometheus.Gatherer,
+ 	logger log.Logger,
++	timeToLive time.Duration,
+ ) *DiskMetricStore {
+ 	// TODO: Do that outside of the constructor to allow the HTTP server to
+ 	//  serve /-/healthy and /-/ready earlier.
+@@ -101,6 +102,7 @@
+ 	}
+ 
+ 	go dms.loop(persistenceInterval)
++	go dms.doCleanUpInRegularInterval(timeToLive)
+ 	return dms
+ }
+ 
+@@ -450,6 +452,35 @@
+ 	}
+ }
+ 
++func (dms *DiskMetricStore) doCleanUpInRegularInterval(timeToLive time.Duration) {
++	if timeToLive == 0 {
++		return
++	}
++	for {
++		dms.cleanupStaleValues(timeToLive)
++		timer := time.NewTimer(timeToLive)
++		<-timer.C
++	}
++}
++
++func (dms *DiskMetricStore) cleanupStaleValues(timeToLive time.Duration) {
++	dms.lock.Lock()
++	defer dms.lock.Unlock()
++
++	cleanupCycleStartTime := time.Now()
++
++	for metricID, group := range dms.metricGroups {
++		for metricName, tmf := range group.Metrics {
++			if tmf.Timestamp.Add(timeToLive).Before(cleanupCycleStartTime) {
++				delete(group.Metrics, metricName)
++			}
++		}
++		if len(group.Metrics) == 0 {
++			delete(dms.metricGroups, metricID)
++		}
++	}
++}
++
+ // groupingKeyFor creates a grouping key from the provided map of grouping
+ // labels. The grouping key is created by joining all label names and values
+ // together with model.SeparatorByte as a separator. The label names are sorted
+Index: storage/diskmetricstore_test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/storage/diskmetricstore_test.go b/storage/diskmetricstore_test.go
+--- a/storage/diskmetricstore_test.go	(revision 007ba874bead1b9ad2253d89e3adeb16a73fd012)
++++ b/storage/diskmetricstore_test.go	(revision 08ab8fc5c2205426c76af9135de867db33c57c0b)
+@@ -657,7 +657,7 @@
+ 	}
+ 	defer os.RemoveAll(tempDir)
+ 	fileName := path.Join(tempDir, "persistence")
+-	dms := NewDiskMetricStore(fileName, 100*time.Millisecond, nil, logger)
++	dms := NewDiskMetricStore(fileName, 100*time.Millisecond, nil, logger, 100*time.Second)
+ 
+ 	// Submit a single simple metric family.
+ 	ts1 := time.Now()
+@@ -770,7 +770,7 @@
+ 	}
+ 
+ 	// Load it again.
+-	dms = NewDiskMetricStore(fileName, 100*time.Millisecond, nil, logger)
++	dms = NewDiskMetricStore(fileName, 100*time.Millisecond, nil, logger, 100*time.Second)
+ 	if err := checkMetricFamilies(
+ 		dms, mf1a, mf2, mf3, mf5,
+ 		pushTimestamp, pushFailedTimestamp,
+@@ -909,7 +909,7 @@
+ }
+ 
+ func TestNoPersistence(t *testing.T) {
+-	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 
+ 	ts1 := time.Now()
+ 	grouping1 := map[string]string{
+@@ -939,7 +939,7 @@
+ 		t.Fatal(err)
+ 	}
+ 
+-	dms = NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms = NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 	if err := checkMetricFamilies(dms); err != nil {
+ 		t.Error(err)
+ 	}
+@@ -954,7 +954,7 @@
+ }
+ 
+ func TestRejectTimestamps(t *testing.T) {
+-	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 
+ 	ts1 := time.Now()
+ 	grouping1 := map[string]string{
+@@ -992,7 +992,7 @@
+ }
+ 
+ func TestRejectInconsistentPush(t *testing.T) {
+-	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 
+ 	ts1 := time.Now()
+ 	grouping1 := map[string]string{
+@@ -1076,7 +1076,7 @@
+ }
+ 
+ func TestSanitizeLabels(t *testing.T) {
+-	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 
+ 	// Push mf1c with the grouping matching mf1b, mf1b should end up in storage.
+ 	ts1 := time.Now()
+@@ -1156,7 +1156,7 @@
+ }
+ 
+ func TestReplace(t *testing.T) {
+-	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger)
++	dms := NewDiskMetricStore("", 100*time.Millisecond, nil, logger, 100*time.Second)
+ 
+ 	// First do an invalid push to set pushFailedTimestamp and to later
+ 	// verify that it is retained and not replaced.
+@@ -1295,7 +1295,7 @@
+ 	defer os.RemoveAll(tempDir)
+ 	fileName := path.Join(tempDir, "persistence")
+ 
+-	dms := NewDiskMetricStore(fileName, 100*time.Millisecond, nil, logger)
++	dms := NewDiskMetricStore(fileName, 100*time.Millisecond, nil, logger, 100*time.Second)
+ 
+ 	labels1 := map[string]string{
+ 		"job":      "job1",
+@@ -1367,7 +1367,7 @@
+ }
+ 
+ func TestHelpStringFix(t *testing.T) {
+-	dms := NewDiskMetricStore("", 100*time.Millisecond, prometheus.DefaultGatherer, logger)
++	dms := NewDiskMetricStore("", 100*time.Millisecond, prometheus.DefaultGatherer, logger, 100*time.Second)
+ 
+ 	ts1 := time.Now()
+ 	errCh := make(chan error, 1)
+Index: Dockerfile
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/Dockerfile b/Dockerfile
+--- a/Dockerfile	(revision 08ab8fc5c2205426c76af9135de867db33c57c0b)
++++ b/Dockerfile	(revision aabfdcf987fcfaffcf81e98aa43c6aada8ae71c9)
+@@ -1,11 +1,19 @@
+-ARG ARCH="amd64"
+-ARG OS="linux"
+-FROM quay.io/prometheus/busybox-${OS}-${ARCH}:latest
++FROM artifactory.outbrain.com:5005/golang:1.21.3-bullseye AS build
++
++WORKDIR $GOPATH/src/pushgateway
++COPY go.mod ./
++COPY go.sum ./
++COPY . .
++
++ENV CGO_ENABLED=0
++RUN go build -ldflags '-extldflags "static"' -v ./...
++RUN go install -v ./...
++RUN md5sum /go/bin/pushgateway | tee /pushgateway.md5sum
++
++FROM quay.io/prometheus/busybox-linux-amd64:latest
+ LABEL maintainer="The Prometheus Authors <prometheus-developers@googlegroups.com>"
+ 
+-ARG ARCH="amd64"
+-ARG OS="linux"
+-COPY --chown=nobody:nobody .build/${OS}-${ARCH}/pushgateway /bin/pushgateway
++COPY --from=build --chown=nobody:nobody /go/bin/pushgateway /bin/pushgateway
+ 
+ EXPOSE 9091
+ RUN mkdir -p /pushgateway && chown nobody:nobody /pushgateway
